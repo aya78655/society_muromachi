@@ -396,6 +396,18 @@
     font-size: 12px;
     color: var(--ink-soft);
   }
+
+  /* ---- まちがえ帳（保存された間違えた問題） ---- */
+  .saved-wrong-box{
+    margin-top: 22px;
+    padding: 16px;
+    border: 2px dashed var(--border);
+    border-radius: 14px;
+  }
+  .saved-wrong-title{ font-weight: 800; font-size: 15px; margin-bottom: 6px; }
+  .saved-wrong-desc{ font-size: 13px; color: var(--ink-soft); margin-bottom: 12px; line-height: 1.6; }
+  .saved-wrong-list{ margin-top: 10px; font-size: 13px; line-height: 1.6; }
+  .saved-wrong-list .review-item{ padding: 10px 0; }
 </style>
 </head>
 <body>
@@ -431,6 +443,16 @@
 
     <div class="row-gap">
       <button class="primary" id="btn-start">クイズをはじめる</button>
+
+    <!-- まちがえ帳：間違えた問題をブラウザに保存 -->
+    <div id="saved-wrong-box" class="saved-wrong-box" style="display:none;">
+      <div class="saved-wrong-title">📒 まちがえ帳</div>
+      <div class="saved-wrong-desc" id="saved-wrong-desc"></div>
+      <button class="primary" id="btn-saved-wrong" style="background: var(--bad); box-shadow: 0 4px 14px rgba(179,57,44,0.28);">まちがえ帳の問題に挑戦</button>
+      <button class="ghost" id="btn-saved-wrong-list">一覧を見る</button>
+      <div id="saved-wrong-list" class="saved-wrong-list hidden"></div>
+      <button class="ghost" id="btn-saved-wrong-clear">まちがえ帳をリセット</button>
+    </div>
     </div>
   </div>
 
@@ -772,6 +794,72 @@ const eraLabel = {seiji:"政治・外交", bunka:"産業・文化"};
 let typeInputEl = null;
 let typeSubmitBtnEl = null;
 
+/* ---- まちがえ帳（ブラウザの localStorage に保存） ----
+   間違えた問題を問題文をキーにして保存する。
+   あとで正解すると、まちがえ帳から自動で消える。 */
+const WRONG_KEY = 'muromachi_quiz_wrongbook_v1';
+
+function loadWrongBook(){
+  try{
+    const v = JSON.parse(localStorage.getItem(WRONG_KEY) || '{}');
+    return (v && typeof v === 'object') ? v : {};
+  }catch(e){ return {}; }
+}
+function saveWrongBook(book){
+  try{ localStorage.setItem(WRONG_KEY, JSON.stringify(book)); }catch(e){}
+}
+function recordResult(item, isCorrect){
+  const book = loadWrongBook();
+  if(isCorrect){
+    delete book[item.q];
+  } else {
+    const prev = book[item.q] || {count: 0};
+    book[item.q] = {count: prev.count + 1, last: Date.now()};
+  }
+  saveWrongBook(book);
+}
+function savedWrongQuestions(){
+  const book = loadWrongBook();
+  return QUESTIONS.filter(q => book[q.q]);
+}
+function renderSavedWrongBox(){
+  const box = document.getElementById('saved-wrong-box');
+  if(!box) return;
+  const list = savedWrongQuestions();
+  if(list.length === 0){ box.style.display = 'none'; return; }
+  const book = loadWrongBook();
+  box.style.display = 'block';
+  document.getElementById('saved-wrong-desc').textContent =
+    `いま ${list.length}問 保存されています。正解すると自動でまちがえ帳から消えます。（①②の設定に関係なく保存された問題が全部出ます。③の回答方法は反映されます）`;
+  document.getElementById('btn-saved-wrong').textContent = `まちがえ帳の${list.length}問に挑戦`;
+  const holder = document.getElementById('saved-wrong-list');
+  holder.innerHTML = '';
+  list.forEach(q => {
+    const div = document.createElement('div');
+    div.className = 'review-item';
+    div.innerHTML = `
+      <div class="review-q">${q.q}</div>
+      <div class="review-a">正解：<span class="right">${q.choices[q.a]}</span>（まちがえた回数：${book[q.q].count}回）</div>
+    `;
+    holder.appendChild(div);
+  });
+}
+function startSavedWrongQuiz(){
+  let base = savedWrongQuestions();
+  if(state.mode === 'type') base = base.filter(q => !q.choiceOnly);
+  if(base.length === 0){
+    alert('記述式で出せる問題がありません。③で「4択」をえらんでください。');
+    return;
+  }
+  state.pool = shuffle(base).map(reshuffleItem);
+  state.idx = 0;
+  state.score = 0;
+  state.wrong = [];
+  state.wrongOnlyMode = true;
+  showScreen('quiz');
+  renderQuestion();
+}
+
 function shuffle(arr){
   const a = arr.slice();
   for(let i=a.length-1;i>0;i--){
@@ -822,6 +910,21 @@ document.getElementById('btn-setting').addEventListener('click', ()=>{
 });
 document.getElementById('btn-next').addEventListener('click', nextQuestion);
 
+document.getElementById('btn-saved-wrong').addEventListener('click', startSavedWrongQuiz);
+document.getElementById('btn-saved-wrong-list').addEventListener('click', ()=>{
+  const l = document.getElementById('saved-wrong-list');
+  l.classList.toggle('hidden');
+  document.getElementById('btn-saved-wrong-list').textContent =
+    l.classList.contains('hidden') ? '一覧を見る' : '一覧をとじる';
+});
+document.getElementById('btn-saved-wrong-clear').addEventListener('click', ()=>{
+  if(confirm('まちがえ帳の記録をすべて消しますか？')){
+    saveWrongBook({});
+    renderSavedWrongBox();
+  }
+});
+renderSavedWrongBox();
+
 function reshuffleItem(q){
   // shuffle choice order, tracking correct index
   const order = shuffle(q.choices.map((c,i)=>i));
@@ -867,6 +970,7 @@ function startWrongOnlyQuiz(){
 }
 
 function showScreen(name){
+  if(name === 'setup') renderSavedWrongBox();
   document.getElementById('screen-setup').classList.toggle('hidden', name!=='setup');
   document.getElementById('screen-quiz').classList.toggle('hidden', name!=='quiz');
   document.getElementById('screen-result').classList.toggle('hidden', name!=='result');
@@ -975,6 +1079,7 @@ function submitTypedAnswer(){
   const correctText = item.choices[item.a];
   const accepted = [correctText].concat(item.alt || []).map(normalizeAnswer);
   const isCorrect = userText.length > 0 && accepted.includes(normalizeAnswer(userText));
+  recordResult(item, isCorrect);
 
   state.answered = true;
   input.disabled = true;
@@ -1019,6 +1124,8 @@ function selectChoice(i, btnEl){
   buttons.forEach(b=> b.disabled = true);
 
   const badge = document.getElementById('result-badge');
+
+  recordResult(item, i === item.a);
 
   if(i === item.a){
     btnEl.classList.add('correct');
@@ -1087,7 +1194,7 @@ function finishQuiz(){
   if(state.wrong.length > 0){
     const title = document.createElement('h2');
     title.className = 'section-title';
-    title.textContent = '間違えた問題の復習';
+    title.textContent = '間違えた問題の復習（まちがえ帳に保存しました）';
     reviewHolder.appendChild(title);
 
     state.wrong.forEach(w=>{
